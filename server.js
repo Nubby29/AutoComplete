@@ -2,7 +2,7 @@
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
-import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, paddleMouseMove, paddleMouseMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
+import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, paddleMouseMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
 import { readSolitaireState, chooseSolitaireAction, solitaireCardLabel, dragTableauCard, dragWasteCard, dragFoundationCard, solitaireSignature, listSolitaireMoves } from './solitaire.js'
 
 const gameUrl = 'https://2048game.com/?ref=google-search-classic'
