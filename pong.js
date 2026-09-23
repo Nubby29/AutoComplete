@@ -141,9 +141,46 @@ export async function restartPongGame(page) {
   return 'restart-failed'
 }
 
-export function pongUrlForDifficulty(difficulty) {
-  const base = 'https://vygam.com/pong'
-  const q = new URLSearchParams()
-  q.set('difficulty', difficulty)
-  return `${base}?${q.toString()}`
+// AutoComplete Pong v1.1 — always opens the base Pong page and selects difficulty in-page.
+export function pongUrlForDifficulty() {
+  return 'https://vygam.com/pong'
+}
+
+export async function selectPongDifficulty(page, difficulty = 'medium') {
+  const label = difficulty.charAt(0).toUpperCase() + difficulty.slice(1).toLowerCase()
+  const selectors = [
+    'button:has-text("' + label + '")',
+    '[role="button"]:has-text("' + label + '")',
+    'text=' + label
+  ]
+  for (const selector of selectors) {
+    try {
+      const button = page.locator(selector).first()
+      if (await button.isVisible({ timeout: 500 })) {
+        await button.click({ timeout: 1000 })
+        return true
+      }
+    } catch {}
+  }
+  return false
+}
+
+export async function startPongGame(page) {
+  const selectors = [
+    'button:has-text("Start game")',
+    'button:has-text("Start Game")',
+    'button:has-text("Start")',
+    '[role="button"]:has-text("Start game")',
+    '[role="button"]:has-text("Start Game")'
+  ]
+  for (const selector of selectors) {
+    try {
+      const button = page.locator(selector).first()
+      if (await button.isVisible({ timeout: 500 })) {
+        await button.click({ timeout: 1000 })
+        return true
+      }
+    } catch {}
+  }
+  return false
 }
