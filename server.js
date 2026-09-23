@@ -1,8 +1,8 @@
-// AutoComplete Server v1.8 — Focus Pong input and expose live state diagnostics.
+// AutoComplete Server v1.9 — Drive the vygam paddle with direct mouse targeting and keyboard fallback.
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
-import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, paddleMouseMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
+import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, paddleMouseMove, paddleMouseMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
 import { readSolitaireState, chooseSolitaireAction, solitaireCardLabel, dragTableauCard, dragWasteCard, dragFoundationCard, solitaireSignature, listSolitaireMoves } from './solitaire.js'
 
 const gameUrl = 'https://2048game.com/?ref=google-search-classic'
@@ -337,10 +337,11 @@ async function pongStep() {
 
     const action = shouldPaddleMove({ ...state, ballY: targetY }, pongLastY, difficulty)
     if (action.dir && action.dir !== 'none') {
-      await paddleKeyboardMove(page, action.dir)
+      const mouseMoved = await paddleMouseMove(page, { ...state, ballY: targetY })
+      if (!mouseMoved) await paddleKeyboardMove(page, action.dir)
       pongLastY = state.paddleY
       session.moves += 1
-      session.status = `Pong: moving ${action.dir} · score ${state.scoreMy}-${state.scoreCpu}`
+      session.status = `Pong: moving ${action.dir} · score ${state.scoreMy}-${state.scoreCpu} · mouse=${mouseMoved}`
     } else {
       session.status = `Pong: tracking ball · score ${state.scoreMy}-${state.scoreCpu}`
     }
