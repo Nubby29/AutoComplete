@@ -1,66 +1,121 @@
 export async function readPongState(page) {
   return page.evaluate(() => {
-    const pick = (sel, ctx = document) => ctx.querySelector(sel) || null
-    const scoreMy = Number(
-      (
-        pick('span#playerScore') ||
-        pick('div.player-score') ||
-        pick('div.score.player') ||
-        pick('span.player-score')
-      ).textContent || 0
-    )
-    const scoreCpu = Number(
-      (
-        pick('span#cpuScore') ||
-        pick('div.cpu-score') ||
-        pick('div.score.cpu') ||
-        pick('span.cpu-score')
-      ).textContent || 0
-    )
-    const paddleEl =
-      pick('div#paddle0') ||
-      pick('div#playerPaddle') ||
-      pick('.paddle.player') ||
-      pick('div.paddle')
-    const rect = paddleEl ? paddleEl.getBoundingClientRect() : null
-    const paddleY = rect ? rect.top : 0
-    const paddleH = rect ? rect.height : 100
-    const ballEl = pick('div#ball') || pick('.ball') || pick('div.ball')
-    const brect = ballEl ? ballEl.getBoundingClientRect() : null
-    const ballY = brect ? brect.top : 0
-    const ballX = brect ? brect.left : 0
-    const ballR = brect ? Math.max(brect.width, brect.height) / 2 : 8
-    const statusEl =
-      pick('div#status') ||
-      pick('.status') ||
-      pick('h1') ||
-      pick('h2') ||
-      pick('div.overlay-text') ||
-      pick('div.message') ||
-      pick('div.status-text')
-    const statusText = statusEl ? String(statusEl.textContent).trim() : ''
-    const bodyText = document.body ? document.body.innerText || '' : ''
-    const overlayVisible = pick('#modal-overlay')
-      ? pick('#modal-overlay').classList.contains('visible')
-      : false
-    const won =
-      /you won|you win|player wins/i.test(bodyText) ||
-      (overlayVisible && /won|win/i.test(bodyText))
-    const finished =
-      /play again|restart|new game|game over|match over/i.test(statusText) || won
-    return {
-      scoreMy,
-      scoreCpu,
-      paddleY,
-      paddleH,
-      ballX,
-      ballY,
-      ballR,
-      won,
-      finished,
-      statusText,
-      bodyText
+    const text = document.body?.innerText || ''
+
+    const numberAfter = (label) => {
+      const m = text.match(new RegExp(label + '\\s*\\n?\\s*(\\d+)', 'i'))
+      return m ? Number(m[1]) : null
     }
+
+    const scoreMy =
+      numberAfter('You') ??
+      Number((document.querySelector('#playerScore, .player-score, .score.player')?.textContent || '0').match(/\\d+/)?.[0] || 0)
+    const scoreCpu =
+      numberAfter('CPU') ??
+      Number((document.querySelector('#cpuScore, .cpu-score, .score.cpu')?.textContent || '0').match(/\\d+/)?.[0] || 0)
+
+    const all = [...document.querySelectorAll('*')]
+    const findByName = (words) => all.find(el => {
+      const n = ((el.id || '') + ' ' + (el.className || '')).toLowerCase()
+      return words.some(w => n.includes(w))
+    })
+
+    let paddleEl =
+      document.querySelector('#paddle0, #playerPaddle, .paddle.player, .player-paddle') ||
+      findByName(['playerpaddle', 'paddle0', 'player-paddle'])
+    let ballEl =
+      document.querySelector('#ball, .ball') ||
+      findByName(['ball'])
+
+    let paddleRect = paddleEl?.getBoundingClientRect?.() || null
+    let ballRect = ballEl?.getBoundingClientRect?.() || null
+
+    // vygam can render the actual game board in a canvas. If no DOM game
+    // elements are exposed, inspect canvas pixels and identify the small ball
+    // plus the two tall/narrow paddles by connected components.
+    const canvas = [...document.querySelectorAll('canvas')]
+      .filter(c => c.width > 200 && c.height > 100)
+      .sort((a,b) => (b.width*b.height) - (a.width*a.height))[0]
+
+    let canvasState = null
+    if ((!paddleRect || !ballRect) && canvas) {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      if (ctx) {
+        const w = canvas.width, h = canvas.height
+        const data = ctx.getImageData(0, 0, w, h).data
+        const step = Math.max(1, Math.floor(Math.min(w, h) / 180))
+        const points = []
+        let bg = [data[0], data[1], data[2]]
+        for (let y = 0; y < h; y += step) {
+          for (let x = 0; x < w; x += step) {
+            const i = (y * w + x) * 4
+            const a = data[i + 3]
+            if (a < 180) continue
+            const dr = Math.abs(data[i] - bg[0])
+            const dg = Math.abs(data[i+1] - bg[1])
+            const db = Math.abs(data[i+2] - bg[2])
+            if (dr + dg + db > 70) points.push([x,y])
+          }
+        }
+        const clusters = []
+        const used = new Set()
+        const key = (x,y) => x + ',' + y
+        const set = new Set(points.map(([x,y]) => key(x,y)))
+        for (const [sx,sy] of points) {
+          const sk = key(sx,sy)
+          if (used.has(sk)) continue
+          const q=[[sx,sy]], comp=[]
+          used.add(sk)
+          while(q.length) {
+            const [x,y]=q.pop(); comp.push([x,y])
+            for (const [nx,ny] of [[x+step,y],[x-step,y],[x,y+step],[x,y-step]]) {
+              const nk=key(nx,ny)
+              if(nx>=0&&ny>=0&&nx<w&&ny<h&&set.has(nk)&&!used.has(nk)){
+                used.add(nk); q.push([nx,ny])
+              }
+            }
+          }
+          if(comp.length >= 3){
+            const xs=comp.map(p=>p[0]), ys=comp.map(p=>p[1])
+            clusters.push({
+              x:Math.min(...xs), y:Math.min(...ys),
+              w:Math.max(...xs)-Math.min(...xs)+step,
+              h:Math.max(...ys)-Math.min(...ys)+step,
+              n:comp.length
+            })
+          }
+        }
+        const paddles = clusters
+          .filter(o => o.h > o.w * 1.8 && o.h > h * 0.08)
+          .sort((a,b)=>a.x-b.x)
+        const balls = clusters
+          .filter(o => o.w < w*0.12 && o.h < h*0.12 && o.w > 2 && o.h > 2)
+          .sort((a,b)=>b.n-a.n)
+        const left = paddles[0]
+        const ball = balls[0]
+        if(left && ball){
+          const r=canvas.getBoundingClientRect()
+          const sx=r.width/w, sy=r.height/h
+          canvasState={
+            paddleY:r.top+(left.y+left.h/2)*sy,
+            paddleH:left.h*sy,
+            ballX:r.left+(ball.x+ball.w/2)*sx,
+            ballY:r.top+(ball.y+ball.h/2)*sy,
+            ballR:Math.max(ball.w*sx,ball.h*sy)/2
+          }
+        }
+      }
+    }
+
+    const paddleY = paddleRect ? paddleRect.top + paddleRect.height/2 : canvasState?.paddleY ?? 0
+    const paddleH = paddleRect ? paddleRect.height : canvasState?.paddleH ?? 100
+    const ballY = ballRect ? ballRect.top + ballRect.height/2 : canvasState?.ballY ?? 0
+    const ballX = ballRect ? ballRect.left + ballRect.width/2 : canvasState?.ballX ?? 0
+    const ballR = ballRect ? Math.max(ballRect.width, ballRect.height)/2 : canvasState?.ballR ?? 8
+
+    const won = /you won|you win|player wins/i.test(text)
+    const finished = won || /play again|game over|match over/i.test(text)
+    return { scoreMy, scoreCpu, paddleY, paddleH, ballX, ballY, ballR, won, finished, statusText:text.slice(0,300), bodyText:text }
   })
 }
 
