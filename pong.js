@@ -163,8 +163,10 @@ export async function paddleKeyboardMove(page, direction) {
   try {
     // A short hold is more reliable than a single keypress for games that
     // move the paddle continuously while the arrow key is held.
+    const canvas = page.locator('canvas').filter({ has: undefined }).first()
+    await canvas.focus().catch(() => {})
     await page.keyboard.down(key)
-    await page.waitForTimeout(35)
+    await page.waitForTimeout(45)
     await page.keyboard.up(key)
     return 'keypress'
   } catch {
