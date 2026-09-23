@@ -1,4 +1,4 @@
-// AutoComplete Server v1.5 — Never click the Pong page header; keep automation on /pong.
+// AutoComplete Server v1.6 — Block Pong external navigations/popups and keep automation on /pong.
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
@@ -715,6 +715,24 @@ async function start(goal, selectedGame = '2048') {
   page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
   const sessionPage = page
   page.on('close', () => { if (page === sessionPage && session.running) stop('Game tab closed', 'stopped') })
+  if (game.startsWith('pong')) {
+    page.on('popup', async (popup) => {
+      console.log(`[PONG] Closed popup: ${popup.url()}`)
+      await popup.close().catch(() => {})
+    })
+    await page.route('**/*', async (route) => {
+      const request = route.request()
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        const url = request.url()
+        if (!url.startsWith('https://vygam.com/pong')) {
+          console.log(`[PONG] Blocked external navigation: ${url}`)
+          await route.abort()
+          return
+        }
+      }
+      await route.continue()
+    })
+  }
   const sudokuDifficulty = game.split('-')[1] || 'easy'
   const pongDifficulty = game.split('-')[1] || 'medium'
   const sudokuPageUrl = `${sudokuUrl.split('?')[0]}/${sudokuDifficulty}?eafs_enabled=false`
