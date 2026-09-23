@@ -1,4 +1,4 @@
-// AutoComplete Server v1.7 — Block vygam ad redirects/trackers and keep Pong automation isolated.
+// AutoComplete Server v1.8 — Focus Pong input and expose live state diagnostics.
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
@@ -294,6 +294,7 @@ async function pongStep() {
   if (!session.running || !game.startsWith('pong')) return
   try {
     const state = await readPongState(page)
+    if ((session.moves || 0) % 20 === 0) console.log(`[PONG] state score=${state.scoreMy}-${state.scoreCpu} ball=(${Math.round(state.ballX)},${Math.round(state.ballY)}) paddleY=${Math.round(state.paddleY)} canvas=${state.canvasDetected}`)
     session.board = [state.scoreMy, state.scoreCpu]
     session.rows = 1
     session.columns = 2
@@ -342,8 +343,9 @@ async function pongStep() {
     }
     loop = setTimeout(pongStep, 25)
   } catch (error) {
+    console.error('[PONG] Step error:', error)
     if (String(error).includes('closed')) return stop('Game tab closed', 'stopped')
-    return stop('Pong automation stopped', 'stopped')
+    return stop('Pong automation stopped: ' + String(error), 'stopped')
   }
 }
 
