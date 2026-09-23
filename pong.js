@@ -132,12 +132,8 @@ export async function restartPongGame(page) {
       }
     } catch {}
   }
-  try {
-    await page.locator('body').click({
-      position: { x: 20, y: 20 },
-      timeout: 300
-    }).catch(() => {})
-  } catch {}
+  // Never click a random page coordinate as a restart fallback. On vygam,
+  // the top-left area contains navigation and can leave /pong or open an external link.
   return 'restart-failed'
 }
 
