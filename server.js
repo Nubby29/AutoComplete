@@ -2,7 +2,7 @@
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
-import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
+import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, paddleMouseMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
 import { readSolitaireState, chooseSolitaireAction, solitaireCardLabel, dragTableauCard, dragWasteCard, dragFoundationCard, solitaireSignature, listSolitaireMoves } from './solitaire.js'
 
 const gameUrl = 'https://2048game.com/?ref=google-search-classic'
@@ -20,6 +20,7 @@ let loop
 let game = '2048'
 let pongLastY = null
 let pongLastBall = null
+let pongLastGoodState = null
 
 function sendJson(response, data) {
   response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
@@ -293,7 +294,9 @@ async function minesweeperStep() {
 async function pongStep() {
   if (!session.running || !game.startsWith('pong')) return
   try {
-    const state = await readPongState(page)
+    let state = await readPongState(page)
+    if (state.canvasDetected && state.ballX > 0 && state.ballY > 0 && state.paddleY > 0) pongLastGoodState = state
+    else if (pongLastGoodState) state = { ...pongLastGoodState, scoreMy: state.scoreMy, scoreCpu: state.scoreCpu, won: state.won, finished: state.finished }
     if ((session.moves || 0) % 20 === 0) console.log(`[PONG] state score=${state.scoreMy}-${state.scoreCpu} ball=(${Math.round(state.ballX)},${Math.round(state.ballY)}) paddleY=${Math.round(state.paddleY)} canvas=${state.canvasDetected}`)
     session.board = [state.scoreMy, state.scoreCpu]
     session.rows = 1
@@ -812,6 +815,8 @@ async function start(goal, selectedGame = '2048') {
     // navigation/logo and send the page from /pong back to the site homepage.
     // Arrow-key control works through page.keyboard without that click.
     pongLastY = null
+    pongLastBall = null
+    pongLastGoodState = null
     if (!difficultySelected) console.log(`Pong difficulty button not found: ${pongDifficulty}`)
     if (!gameStarted) console.log('Pong start button not found; continuing with live state detection')
     console.log(`[PONG] Final URL: ${page.url()}`)
