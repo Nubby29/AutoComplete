@@ -1,6 +1,7 @@
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
+import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, pongUrlForDifficulty } from './pong.js'
 import { readSolitaireState, chooseSolitaireAction, solitaireCardLabel, dragTableauCard, dragWasteCard, dragFoundationCard, solitaireSignature, listSolitaireMoves } from './solitaire.js'
 
 const gameUrl = 'https://2048game.com/?ref=google-search-classic'
@@ -16,6 +17,7 @@ let browser
 let page
 let loop
 let game = '2048'
+let pongLastY = null
 
 function sendJson(response, data) {
   response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
@@ -283,6 +285,33 @@ async function minesweeperStep() {
   } catch (error) {
     if (String(error).includes('page') || String(error).includes('closed')) return stop('Game tab closed', 'stopped')
     return stop('Minesweeper automation stopped', 'stopped')
+  }
+}
+
+async function pongStep() {
+  if (!session.running || !game.startsWith('pong')) return
+  try {
+    const state = await readPongState(page)
+    session.board = [state.scoreMy, state.scoreCpu]
+    session.rows = 1
+    session.columns = 2
+    session.best = state.scoreMy
+    if (pongGoalMet(state, session.goal)) return stop(`Pong goal reached: ${state.scoreMy} points`)
+    if (state.finished) return stop(`Pong finished: ${state.scoreMy} - ${state.scoreCpu}`, state.won ? 'success' : 'stopped')
+    const difficulty = game.split('-')[1] || 'medium'
+    const action = shouldPaddleMove(state, pongLastY, difficulty)
+    if (action.dir && action.dir !== 'none') {
+      await paddleKeyboardMove(page, action.dir)
+      pongLastY = state.paddleY
+      session.moves += 1
+      session.status = `Pong: moving ${action.dir} · score ${state.scoreMy}-${state.scoreCpu}`
+    } else {
+      session.status = `Pong: tracking ball · score ${state.scoreMy}-${state.scoreCpu}`
+    }
+    loop = setTimeout(pongStep, 40)
+  } catch (error) {
+    if (String(error).includes('closed')) return stop('Game tab closed', 'stopped')
+    return stop('Pong automation stopped', 'stopped')
   }
 }
 
@@ -652,6 +681,7 @@ async function solitaireStep() {
 }
 
 async function step() {
+  if (game.startsWith('pong')) return pongStep()
   if (game === 'solitaire') return solitaireStep()
   if (game.startsWith('sudoku')) return sudokuStep()
   if (game.startsWith('minesweeper')) return minesweeperStep()
@@ -676,8 +706,10 @@ async function start(goal, selectedGame = '2048') {
   const sessionPage = page
   page.on('close', () => { if (page === sessionPage && session.running) stop('Game tab closed', 'stopped') })
   const sudokuDifficulty = game.split('-')[1] || 'easy'
+  const pongDifficulty = game.split('-')[1] || 'medium'
   const sudokuPageUrl = `${sudokuUrl.split('?')[0]}/${sudokuDifficulty}?eafs_enabled=false`
-  await page.goto(game.startsWith('minesweeper') ? minesweeperUrl : game.startsWith('sudoku') ? sudokuPageUrl : game === 'solitaire' ? solitaireUrl : gameUrl, { waitUntil: 'domcontentloaded' })
+  const pongPageUrl = pongUrlForDifficulty(pongDifficulty)
+  await page.goto(game.startsWith('minesweeper') ? minesweeperUrl : game.startsWith('sudoku') ? sudokuPageUrl : game === 'solitaire' ? solitaireUrl : game.startsWith('pong') ? pongPageUrl : gameUrl, { waitUntil: 'domcontentloaded' })
   if (game.startsWith('minesweeper')) {
     const difficulty = game.split('-')[1] || 'beginner'
     await page.locator(`#${difficulty}`).evaluate((element) => element.click()).catch(() => {})
@@ -686,6 +718,9 @@ async function start(goal, selectedGame = '2048') {
   } else if (game.startsWith('sudoku')) {
     await page.locator('.su-cell').first().waitFor({ state: 'attached', timeout: 10000 })
     await page.locator('button[aria-label="close"], .xwd__modal--close').first().click({ timeout: 1500 }).catch(() => {})
+  } else if (game.startsWith('pong')) {
+    await page.waitForTimeout(800)
+    pongLastY = null
   } else if (game !== 'solitaire') {
     await page.getByText('New Game', { exact: true }).click().catch(() => {})
     await page.locator('.tile-container .tile').first().waitFor({ state: 'attached', timeout: 5000 })
@@ -697,7 +732,7 @@ async function start(goal, selectedGame = '2048') {
   }
   const difficulty = game.split('-')[1]
   const recordSeconds = difficulty === 'beginner' ? 1 : difficulty === 'intermediate' ? 16 : 52
-    session = { running: true, status: game.startsWith('sudoku') ? `NYT Sudoku ${sudokuDifficulty} loaded` : game === 'solitaire' ? 'Solitaire loaded' : 'Live game: starting', moves: 0, attemptMoves: 0, best: 0, attempts: 0, goal, recordSeconds, startedAt: Date.now(), rows: game.startsWith('minesweeper') ? 9 : 4, columns: game.startsWith('minesweeper') ? 9 : 4, board: [], cycles: 0, banned: [], lastTableauMove: null, lastTableauCard: '', stepCount: 0, sinceProgress: 0, bestProgress: undefined, visits: new Map(), triedMoves: new Map(), decisions: [], noProgress: 0 }
+    session = { running: true, status: game.startsWith('sudoku') ? `NYT Sudoku ${sudokuDifficulty} loaded` : game === 'solitaire' ? 'Solitaire loaded' : game.startsWith('pong') ? `Pong ${pongDifficulty} loaded` : 'Live game: starting', moves: 0, attemptMoves: 0, best: 0, attempts: 0, goal, recordSeconds, startedAt: Date.now(), rows: game.startsWith('minesweeper') ? 9 : game.startsWith('pong') ? 1 : 4, columns: game.startsWith('minesweeper') ? 9 : game.startsWith('pong') ? 2 : 4, board: [], cycles: 0, banned: [], lastTableauMove: null, lastTableauCard: '', stepCount: 0, sinceProgress: 0, bestProgress: undefined, visits: new Map(), triedMoves: new Map(), decisions: [], noProgress: 0 }
   step()
 }
 
@@ -707,7 +742,7 @@ const server = http.createServer(async (request, response) => {
   if (request.url === '/api/run' && request.method === 'POST') {
     let body = ''
     request.on('data', (chunk) => { body += chunk })
-    request.on('end', async () => { try { const payload = JSON.parse(body); const rawGoal = payload.goal; const goal = payload.game === 'solitaire' ? 'complete' : Number(rawGoal || 2048); await start(goal, payload.game || '2048'); sendJson(response, session) } catch { response.writeHead(500, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ error: 'Unable to start game automation' })) } })
+    request.on('end', async () => { try { const payload = JSON.parse(body); const rawGoal = payload.goal; const goal = payload.game === 'solitaire' ? 'complete' : payload.game?.startsWith('pong') ? Number(rawGoal || 7) : Number(rawGoal || 2048); await start(goal, payload.game || '2048'); sendJson(response, session) } catch { response.writeHead(500, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ error: 'Unable to start game automation' })) } })
     return
   }
   if (request.url === '/api/stop' && request.method === 'POST') { await stop('Automation paused'); return sendJson(response, session) }
