@@ -1,4 +1,4 @@
-// AutoComplete Server v1.4 — Pong URL is verified after load and after each control interaction.
+// AutoComplete Server v1.5 — Never click the Pong page header; keep automation on /pong.
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
@@ -758,7 +758,9 @@ async function start(goal, selectedGame = '2048') {
       await page.goto(pongUrl, { waitUntil: 'domcontentloaded' })
       await page.waitForTimeout(800)
     }
-    await page.locator('body').click({ position: { x: 20, y: 20 }, timeout: 1000 }).catch(() => {})
+    // Do not click an arbitrary body coordinate here: (20,20) can hit vygam's
+    // navigation/logo and send the page from /pong back to the site homepage.
+    // Arrow-key control works through page.keyboard without that click.
     pongLastY = null
     if (!difficultySelected) console.log(`Pong difficulty button not found: ${pongDifficulty}`)
     if (!gameStarted) console.log('Pong start button not found; continuing with live state detection')
