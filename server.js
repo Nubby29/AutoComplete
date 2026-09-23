@@ -1,7 +1,8 @@
+// AutoComplete Server v1.3 — Pong opens the base URL, selects the requested difficulty, and starts automatically.
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
-import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, pongUrlForDifficulty } from './pong.js'
+import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame } from './pong.js'
 import { readSolitaireState, chooseSolitaireAction, solitaireCardLabel, dragTableauCard, dragWasteCard, dragFoundationCard, solitaireSignature, listSolitaireMoves } from './solitaire.js'
 
 const gameUrl = 'https://2048game.com/?ref=google-search-classic'
@@ -708,7 +709,7 @@ async function start(goal, selectedGame = '2048') {
   const sudokuDifficulty = game.split('-')[1] || 'easy'
   const pongDifficulty = game.split('-')[1] || 'medium'
   const sudokuPageUrl = `${sudokuUrl.split('?')[0]}/${sudokuDifficulty}?eafs_enabled=false`
-  const pongPageUrl = pongUrlForDifficulty(pongDifficulty)
+  const pongPageUrl = pongUrlForDifficulty()
   await page.goto(game.startsWith('minesweeper') ? minesweeperUrl : game.startsWith('sudoku') ? sudokuPageUrl : game === 'solitaire' ? solitaireUrl : game.startsWith('pong') ? pongPageUrl : gameUrl, { waitUntil: 'domcontentloaded' })
   if (game.startsWith('minesweeper')) {
     const difficulty = game.split('-')[1] || 'beginner'
@@ -720,7 +721,13 @@ async function start(goal, selectedGame = '2048') {
     await page.locator('button[aria-label="close"], .xwd__modal--close').first().click({ timeout: 1500 }).catch(() => {})
   } else if (game.startsWith('pong')) {
     await page.waitForTimeout(800)
+    const difficultySelected = await selectPongDifficulty(page, pongDifficulty)
+    await page.waitForTimeout(250)
+    const gameStarted = await startPongGame(page)
+    await page.locator('body').click({ position: { x: 20, y: 20 }, timeout: 1000 }).catch(() => {})
     pongLastY = null
+    if (!difficultySelected) console.log(`Pong difficulty button not found: ${pongDifficulty}`)
+    if (!gameStarted) console.log('Pong start button not found; continuing with live state detection')
   } else if (game !== 'solitaire') {
     await page.getByText('New Game', { exact: true }).click().catch(() => {})
     await page.locator('.tile-container .tile').first().waitFor({ state: 'attached', timeout: 5000 })
