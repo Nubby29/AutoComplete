@@ -30,6 +30,11 @@ export async function readPongState(page) {
     let paddleRect = paddleEl?.getBoundingClientRect?.() || null
     let ballRect = ballEl?.getBoundingClientRect?.() || null
 
+    // vygam's actual board is canvas-rendered. Prefer canvas coordinates when
+    // available because generic DOM elements can be menu/overlay elements.
+    // This prevents the controller from following a stale/non-game element.
+    const hasGameCanvas = [...document.querySelectorAll('canvas')].some(c => c.width > 200 && c.height > 100)
+
     // vygam can render the actual game board in a canvas. If no DOM game
     // elements are exposed, inspect canvas pixels and identify the small ball
     // plus the two tall/narrow paddles by connected components.
@@ -107,15 +112,15 @@ export async function readPongState(page) {
       }
     }
 
-    const paddleY = paddleRect ? paddleRect.top + paddleRect.height/2 : canvasState?.paddleY ?? 0
-    const paddleH = paddleRect ? paddleRect.height : canvasState?.paddleH ?? 100
-    const ballY = ballRect ? ballRect.top + ballRect.height/2 : canvasState?.ballY ?? 0
-    const ballX = ballRect ? ballRect.left + ballRect.width/2 : canvasState?.ballX ?? 0
-    const ballR = ballRect ? Math.max(ballRect.width, ballRect.height)/2 : canvasState?.ballR ?? 8
+    const paddleY = canvasState?.paddleY ?? (paddleRect ? paddleRect.top + paddleRect.height/2 : 0)
+    const paddleH = canvasState?.paddleH ?? (paddleRect ? paddleRect.height : 100)
+    const ballY = canvasState?.ballY ?? (ballRect ? ballRect.top + ballRect.height/2 : 0)
+    const ballX = canvasState?.ballX ?? (ballRect ? ballRect.left + ballRect.width/2 : 0)
+    const ballR = canvasState?.ballR ?? (ballRect ? Math.max(ballRect.width, ballRect.height)/2 : 8)
 
     const won = /you won|you win|player wins/i.test(text)
     const finished = won || /play again|game over|match over/i.test(text)
-    return { scoreMy, scoreCpu, paddleY, paddleH, ballX, ballY, ballR, won, finished, statusText:text.slice(0,300), bodyText:text }
+    return { scoreMy, scoreCpu, paddleY, paddleH, ballX, ballY, ballR, won, finished, statusText:text.slice(0,300), bodyText:text, canvasDetected: Boolean(canvasState), canvasAvailable: hasGameCanvas }
   })
 }
 
