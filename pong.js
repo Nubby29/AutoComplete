@@ -48,9 +48,18 @@ export async function readPongState(page) {
       if (ctx) {
         const w = canvas.width, h = canvas.height
         const data = ctx.getImageData(0, 0, w, h).data
-        const step = Math.max(1, Math.floor(Math.min(w, h) / 180))
+        const step = Math.max(1, Math.floor(Math.min(w, h) / 240))
         const points = []
-        let bg = [data[0], data[1], data[2]]
+        // Use the most common opaque color as the background. The first pixel
+        // can be part of a border/overlay and is not a reliable background.
+        const histogram = new Map()
+        for (let i = 0; i < data.length; i += 16) {
+          if (data[i + 3] < 180) continue
+          const k = `${data[i]},${data[i+1]},${data[i+2]}`
+          histogram.set(k, (histogram.get(k) || 0) + 1)
+        }
+        const bgKey = [...histogram.entries()].sort((a,b) => b[1] - a[1])[0]?.[0] || '0,0,0'
+        const bg = bgKey.split(',').map(Number)
         for (let y = 0; y < h; y += step) {
           for (let x = 0; x < w; x += step) {
             const i = (y * w + x) * 4
@@ -73,7 +82,7 @@ export async function readPongState(page) {
           used.add(sk)
           while(q.length) {
             const [x,y]=q.pop(); comp.push([x,y])
-            for (const [nx,ny] of [[x+step,y],[x-step,y],[x,y+step],[x,y-step]]) {
+            for (const [nx,ny] of [[x+step,y],[x-step,y],[x,y+step],[x,y-step],[x+step,y+step],[x-step,y-step],[x+step,y-step],[x-step,y+step]]) {
               const nk=key(nx,ny)
               if(nx>=0&&ny>=0&&nx<w&&ny<h&&set.has(nk)&&!used.has(nk)){
                 used.add(nk); q.push([nx,ny])
@@ -118,9 +127,10 @@ export async function readPongState(page) {
     const ballX = canvasState?.ballX ?? (ballRect ? ballRect.left + ballRect.width/2 : 0)
     const ballR = canvasState?.ballR ?? (ballRect ? Math.max(ballRect.width, ballRect.height)/2 : 8)
 
+    const canvasRect = canvas ? canvas.getBoundingClientRect() : null
     const won = /you won|you win|player wins/i.test(text)
     const finished = won || /play again|game over|match over/i.test(text)
-    return { scoreMy, scoreCpu, paddleY, paddleH, ballX, ballY, ballR, won, finished, statusText:text.slice(0,300), bodyText:text, canvasDetected: Boolean(canvasState), canvasAvailable: hasGameCanvas }
+    return { scoreMy, scoreCpu, paddleY, paddleH, ballX, ballY, ballR, won, finished, statusText:text.slice(0,300), bodyText:text, canvasDetected: Boolean(canvasState), canvasAvailable: hasGameCanvas, canvasRect: canvasRect ? {left:canvasRect.left,top:canvasRect.top,width:canvasRect.width,height:canvasRect.height} : null }
   })
 }
 
@@ -246,4 +256,16 @@ export async function startPongGame(page) {
     } catch {}
   }
   return false
+}
+
+export async function paddleMouseMove(page, state) {
+  if (!state?.canvasRect || !Number.isFinite(state.ballY)) return false
+  const r = state.canvasRect
+  const y = Math.max(r.top + 4, Math.min(r.top + r.height - 4, state.ballY))
+  try {
+    // vygam supports mouse/drag control. Move over the player's side of the
+    // board so the game's pointer handler receives the paddle target directly.
+    await page.mouse.move(r.left + Math.max(8, r.width * 0.08), y, { steps: 2 })
+    return true
+  } catch { return false }
 }
