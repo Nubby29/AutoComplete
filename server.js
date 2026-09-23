@@ -2,7 +2,7 @@
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
-import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame } from './pong.js'
+import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
 import { readSolitaireState, chooseSolitaireAction, solitaireCardLabel, dragTableauCard, dragWasteCard, dragFoundationCard, solitaireSignature, listSolitaireMoves } from './solitaire.js'
 
 const gameUrl = 'https://2048game.com/?ref=google-search-classic'
@@ -298,7 +298,16 @@ async function pongStep() {
     session.columns = 2
     session.best = state.scoreMy
     if (pongGoalMet(state, session.goal)) return stop(`Pong goal reached: ${state.scoreMy} points`)
-    if (state.finished) return stop(`Pong finished: ${state.scoreMy} - ${state.scoreCpu}`, state.won ? 'success' : 'stopped')
+    if (state.finished) {
+      if (state.won || state.scoreMy >= session.goal) return stop('Pong won: ' + state.scoreMy + '-' + state.scoreCpu, 'success')
+      session.attempts = (session.attempts || 0) + 1
+      session.status = 'Pong lost ' + state.scoreMy + '-' + state.scoreCpu + ' · restarting attempt ' + session.attempts
+      await restartPongGame(page)
+      await page.waitForTimeout(350)
+      pongLastY = null
+      loop = setTimeout(pongStep, 250)
+      return
+    }
     const difficulty = game.split('-')[1] || 'medium'
     const action = shouldPaddleMove(state, pongLastY, difficulty)
     if (action.dir && action.dir !== 'none') {
