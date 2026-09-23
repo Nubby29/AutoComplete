@@ -133,7 +133,7 @@ export function predictPongImpact(state, previous, difficulty = 'medium') {
 
     // Only predict when the ball is travelling toward our left paddle.
     if (vx < -0.01) {
-      const frames = Math.max(0, (state.ballX - leftX) / vx)
+      const frames = Math.max(0, (state.ballX - leftX) / Math.abs(vx))
       targetY = state.ballY + vy * frames
 
       // Reflect the predicted point across the top/bottom walls.
