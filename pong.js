@@ -30,6 +30,19 @@ function chooseCanvasShapes(trace, canvas) {
 
 export async function readPongState(page) {
   return page.evaluate(() => {
+    const scoreFromText = (text, label) => {
+      const match = text.match(new RegExp(label + '\\\\s*\\\\n?\\\\s*(\\\\d+)', 'i'))
+      return match ? Number(match[1]) : 0
+    }
+    const chooseCanvasShapes = (trace, canvas) => {
+      const rects = Array.isArray(trace?.rects) ? trace.rects : []
+      const arcs = Array.isArray(trace?.arcs) ? trace.arcs : []
+      const paddle = rects.filter(r => r.x < canvas.width * 0.35 && r.w > 2 && r.h > r.w * 1.4 && r.h < canvas.height * 0.6).sort((a,b) => b.h*b.w - a.h*a.w)[0]
+      const ballRects = rects.filter(r => r.w > 1 && r.h > 1 && r.w < canvas.width * 0.12 && r.h < canvas.height * 0.12).sort((a,b) => a.w*a.h - b.w*b.h)
+      const ballArcs = arcs.filter(a => a.r > 1 && a.r < Math.min(canvas.width, canvas.height) * 0.08).sort((a,b) => a.r-b.r)
+      const ball = ballArcs[0] ? { x: ballArcs[0].x-ballArcs[0].r, y: ballArcs[0].y-ballArcs[0].r, w: ballArcs[0].r*2, h: ballArcs[0].r*2 } : ballRects[0]
+      return { paddle, ball }
+    }
     const text = document.body?.innerText || ''
     const scoreMy = scoreFromText(text, 'You')
     const scoreCpu = scoreFromText(text, 'CPU')
