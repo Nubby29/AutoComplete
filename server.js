@@ -1,4 +1,4 @@
-// AutoComplete Server v1.6 — Block Pong external navigations/popups and keep automation on /pong.
+// AutoComplete Server v1.7 — Block vygam ad redirects/trackers and keep Pong automation isolated.
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
@@ -722,8 +722,16 @@ async function start(goal, selectedGame = '2048') {
     })
     await page.route('**/*', async (route) => {
       const request = route.request()
+      const url = request.url()
+      // vygam's Pong page currently attempts to load an nn125.com/link2
+      // advertising redirect. Abort the request at the network layer so it
+      // cannot navigate the game tab or open an unwanted destination.
+      if (/^https:\/\/nn125\.com\//i.test(url)) {
+        console.log(`[PONG] Blocked ad/tracker request: ${url}`)
+        await route.abort()
+        return
+      }
       if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
-        const url = request.url()
         if (!url.startsWith('https://vygam.com/pong')) {
           console.log(`[PONG] Blocked external navigation: ${url}`)
           await route.abort()
