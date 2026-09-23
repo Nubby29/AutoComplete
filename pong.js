@@ -1,232 +1,227 @@
+// AutoComplete Pong v1.2 — trace the real canvas drawing, predict the left-side impact, and target edge hits.
+
+function scoreFromText(text, label) {
+  const match = text.match(new RegExp(label + '\\s*\\n?\\s*(\\d+)', 'i'))
+  return match ? Number(match[1]) : 0
+}
+
+function chooseCanvasShapes(trace, canvas) {
+  const rects = Array.isArray(trace?.rects) ? trace.rects : []
+  const arcs = Array.isArray(trace?.arcs) ? trace.arcs : []
+
+  const paddle = rects
+    .filter(r => r.x < canvas.width * 0.35 && r.w > 2 && r.h > r.w * 1.4 && r.h < canvas.height * 0.6)
+    .sort((a, b) => (b.h * b.w) - (a.h * a.w))[0]
+
+  const ballRects = rects
+    .filter(r => r.w > 1 && r.h > 1 && r.w < canvas.width * 0.12 && r.h < canvas.height * 0.12)
+    .sort((a, b) => (a.w * a.h) - (b.w * b.h))
+
+  const ballArcs = arcs
+    .filter(a => a.r > 1 && a.r < Math.min(canvas.width, canvas.height) * 0.08)
+    .sort((a, b) => a.r - b.r)
+
+  const ball = ballArcs[0]
+    ? { x: ballArcs[0].x - ballArcs[0].r, y: ballArcs[0].y - ballArcs[0].r, w: ballArcs[0].r * 2, h: ballArcs[0].r * 2 }
+    : ballRects[0]
+
+  return { paddle, ball }
+}
+
 export async function readPongState(page) {
   return page.evaluate(() => {
     const text = document.body?.innerText || ''
+    const scoreMy = scoreFromText(text, 'You')
+    const scoreCpu = scoreFromText(text, 'CPU')
 
-    const numberAfter = (label) => {
-      const m = text.match(new RegExp(label + '\\s*\\n?\\s*(\\d+)', 'i'))
-      return m ? Number(m[1]) : null
-    }
-
-    const scoreMy =
-      numberAfter('You') ??
-      Number((document.querySelector('#playerScore, .player-score, .score.player')?.textContent || '0').match(/\\d+/)?.[0] || 0)
-    const scoreCpu =
-      numberAfter('CPU') ??
-      Number((document.querySelector('#cpuScore, .cpu-score, .score.cpu')?.textContent || '0').match(/\\d+/)?.[0] || 0)
-
-    const all = [...document.querySelectorAll('*')]
-    const findByName = (words) => all.find(el => {
-      const n = ((el.id || '') + ' ' + (el.className || '')).toLowerCase()
-      return words.some(w => n.includes(w))
-    })
-
-    let paddleEl =
-      document.querySelector('#paddle0, #playerPaddle, .paddle.player, .player-paddle') ||
-      findByName(['playerpaddle', 'paddle0', 'player-paddle'])
-    let ballEl =
-      document.querySelector('#ball, .ball') ||
-      findByName(['ball'])
-
-    let paddleRect = paddleEl?.getBoundingClientRect?.() || null
-    let ballRect = ballEl?.getBoundingClientRect?.() || null
-
-    // vygam's actual board is canvas-rendered. Prefer canvas coordinates when
-    // available because generic DOM elements can be menu/overlay elements.
-    // This prevents the controller from following a stale/non-game element.
-    const hasGameCanvas = [...document.querySelectorAll('canvas')].some(c => c.width > 200 && c.height > 100)
-
-    // vygam can render the actual game board in a canvas. If no DOM game
-    // elements are exposed, inspect canvas pixels and identify the small ball
-    // plus the two tall/narrow paddles by connected components.
     const canvas = [...document.querySelectorAll('canvas')]
       .filter(c => c.width > 200 && c.height > 100)
-      .sort((a,b) => (b.width*b.height) - (a.width*a.height))[0]
+      .sort((a, b) => (b.width * b.height) - (a.width * a.height))[0]
 
-    let canvasState = null
-    if ((!paddleRect || !ballRect) && canvas) {
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      if (ctx) {
-        const w = canvas.width, h = canvas.height
-        const data = ctx.getImageData(0, 0, w, h).data
-        const step = Math.max(1, Math.floor(Math.min(w, h) / 240))
-        const points = []
-        // Use the most common opaque color as the background. The first pixel
-        // can be part of a border/overlay and is not a reliable background.
-        const histogram = new Map()
-        for (let i = 0; i < data.length; i += 16) {
-          if (data[i + 3] < 180) continue
-          const k = `${data[i]},${data[i+1]},${data[i+2]}`
-          histogram.set(k, (histogram.get(k) || 0) + 1)
-        }
-        const bgKey = [...histogram.entries()].sort((a,b) => b[1] - a[1])[0]?.[0] || '0,0,0'
-        const bg = bgKey.split(',').map(Number)
-        for (let y = 0; y < h; y += step) {
-          for (let x = 0; x < w; x += step) {
-            const i = (y * w + x) * 4
-            const a = data[i + 3]
-            if (a < 180) continue
-            const dr = Math.abs(data[i] - bg[0])
-            const dg = Math.abs(data[i+1] - bg[1])
-            const db = Math.abs(data[i+2] - bg[2])
-            if (dr + dg + db > 70) points.push([x,y])
-          }
-        }
-        const clusters = []
-        const used = new Set()
-        const key = (x,y) => x + ',' + y
-        const set = new Set(points.map(([x,y]) => key(x,y)))
-        for (const [sx,sy] of points) {
-          const sk = key(sx,sy)
-          if (used.has(sk)) continue
-          const q=[[sx,sy]], comp=[]
-          used.add(sk)
-          while(q.length) {
-            const [x,y]=q.pop(); comp.push([x,y])
-            for (const [nx,ny] of [[x+step,y],[x-step,y],[x,y+step],[x,y-step],[x+step,y+step],[x-step,y-step],[x+step,y-step],[x-step,y+step]]) {
-              const nk=key(nx,ny)
-              if(nx>=0&&ny>=0&&nx<w&&ny<h&&set.has(nk)&&!used.has(nk)){
-                used.add(nk); q.push([nx,ny])
-              }
-            }
-          }
-          if(comp.length >= 3){
-            const xs=comp.map(p=>p[0]), ys=comp.map(p=>p[1])
-            clusters.push({
-              x:Math.min(...xs), y:Math.min(...ys),
-              w:Math.max(...xs)-Math.min(...xs)+step,
-              h:Math.max(...ys)-Math.min(...ys)+step,
-              n:comp.length
-            })
-          }
-        }
-        const paddles = clusters
-          .filter(o => o.h > o.w * 1.8 && o.h > h * 0.08)
-          .sort((a,b)=>a.x-b.x)
-        const balls = clusters
-          .filter(o => o.w < w*0.12 && o.h < h*0.12 && o.w > 2 && o.h > 2)
-          .sort((a,b)=>b.n-a.n)
-        const left = paddles[0]
-        const ball = balls[0]
-        if(left && ball){
-          const r=canvas.getBoundingClientRect()
-          const sx=r.width/w, sy=r.height/h
-          canvasState={
-            paddleY:r.top+(left.y+left.h/2)*sy,
-            paddleH:left.h*sy,
-            ballX:r.left+(ball.x+ball.w/2)*sx,
-            ballY:r.top+(ball.y+ball.h/2)*sy,
-            ballR:Math.max(ball.w*sx,ball.h*sy)/2
-          }
-        }
+    let paddleY = 0
+    let paddleH = 80
+    let ballX = 0
+    let ballY = 0
+    let ballR = 6
+    let canvasDetected = false
+    let canvasRect = null
+
+    if (canvas) {
+      const r = canvas.getBoundingClientRect()
+      canvasRect = { left: r.left, top: r.top, width: r.width, height: r.height }
+
+      const trace = window.__pongTrace?.last || null
+      const shapes = chooseCanvasShapes(trace, canvas)
+
+      if (shapes.paddle && shapes.ball) {
+        const sx = r.width / canvas.width
+        const sy = r.height / canvas.height
+        paddleY = r.top + (shapes.paddle.y + shapes.paddle.h / 2) * sy
+        paddleH = shapes.paddle.h * sy
+        ballX = r.left + (shapes.ball.x + shapes.ball.w / 2) * sx
+        ballY = r.top + (shapes.ball.y + shapes.ball.h / 2) * sy
+        ballR = Math.max(shapes.ball.w * sx, shapes.ball.h * sy) / 2
+        canvasDetected = true
       }
     }
 
-    const paddleY = canvasState?.paddleY ?? (paddleRect ? paddleRect.top + paddleRect.height/2 : 0)
-    const paddleH = canvasState?.paddleH ?? (paddleRect ? paddleRect.height : 100)
-    const ballY = canvasState?.ballY ?? (ballRect ? ballRect.top + ballRect.height/2 : 0)
-    const ballX = canvasState?.ballX ?? (ballRect ? ballRect.left + ballRect.width/2 : 0)
-    const ballR = canvasState?.ballR ?? (ballRect ? Math.max(ballRect.width, ballRect.height)/2 : 8)
-
-    const canvasRect = canvas ? canvas.getBoundingClientRect() : null
     const won = /you won|you win|player wins/i.test(text)
     const finished = won || /play again|game over|match over/i.test(text)
-    return { scoreMy, scoreCpu, paddleY, paddleH, ballX, ballY, ballR, won, finished, statusText:text.slice(0,300), bodyText:text, canvasDetected: Boolean(canvasState), canvasAvailable: hasGameCanvas, canvasRect: canvasRect ? {left:canvasRect.left,top:canvasRect.top,width:canvasRect.width,height:canvasRect.height} : null }
+
+    return {
+      scoreMy,
+      scoreCpu,
+      paddleY,
+      paddleH,
+      ballX,
+      ballY,
+      ballR,
+      won,
+      finished,
+      canvasDetected,
+      canvasAvailable: Boolean(canvas),
+      canvasRect,
+      statusText: text.slice(0, 500)
+    }
   })
 }
 
 export function pongGoalMet(state, goal) {
-  if (!state) return false
-  if (state.finished) return state.scoreMy >= goal || state.won
-  return state.scoreMy >= goal
+  return Boolean(state && (state.scoreMy >= goal || (state.finished && state.won)))
 }
 
 export function pongPolicy(difficulty = 'medium') {
-  const map = {
-    easy: { label: 'Pong / Easy', deadbandFactor: 0.14, maxLagPx: 220, moveThreshold: 6 },
-    medium: { label: 'Pong / Medium', deadbandFactor: 0.08, maxLagPx: 160, moveThreshold: 4 },
-    hard: { label: 'Pong / Hard', deadbandFactor: 0.05, maxLagPx: 110, moveThreshold: 2 }
-  }
-  return map[difficulty] || map.medium
+  return {
+    easy: { deadband: 5, lead: 0.30, edgeBias: 0.34 },
+    medium: { deadband: 4, lead: 0.38, edgeBias: 0.40 },
+    hard: { deadband: 3, lead: 0.46, edgeBias: 0.44 }
+  }[difficulty] || { deadband: 4, lead: 0.38, edgeBias: 0.40 }
 }
 
-export function shouldPaddleMove(state, lastY, difficulty = 'medium') {
-  if (!state || state.finished) return { dir: null, reason: 'no-state' }
+export function predictPongImpact(state, previous, difficulty = 'medium') {
+  if (!state?.canvasRect || !Number.isFinite(state.ballX) || !Number.isFinite(state.ballY)) return null
+
   const policy = pongPolicy(difficulty)
-  if (state.scoreMy >= 7) return { dir: null, reason: 'goal-met' }
-  const center = state.paddleY + state.paddleH / 2
-  const target = state.ballY
-  const deadband = Math.max(
-    policy.moveThreshold,
-    state.paddleH * policy.deadbandFactor
-  )
-  const diff = target - center
-  const lag = Math.abs(diff)
-  if (lag <= deadband) return { dir: 'none', reason: 'within-deadband' }
-  if (lag > policy.maxLagPx)
-    return { dir: diff > 0 ? 'down' : 'up', reason: 'chase-lag' }
-  return { dir: diff > 0 ? 'down' : 'up', reason: 'track-ball' }
+  const board = state.canvasRect
+  const leftX = board.left + Math.max(8, board.width * 0.055)
+  const top = board.top
+  const bottom = board.top + board.height
+
+  let targetY = state.ballY
+
+  if (
+    previous &&
+    Number.isFinite(previous.ballX) &&
+    Number.isFinite(previous.ballY) &&
+    previous.ballX !== state.ballX
+  ) {
+    const vx = state.ballX - previous.ballX
+    const vy = state.ballY - previous.ballY
+
+    // Only predict when the ball is travelling toward our left paddle.
+    if (vx < -0.01) {
+      const frames = Math.max(0, (state.ballX - leftX) / vx)
+      targetY = state.ballY + vy * frames
+
+      // Reflect the predicted point across the top/bottom walls.
+      const margin = Math.max(state.ballR, 2)
+      const minY = top + margin
+      const maxY = bottom - margin
+      const height = maxY - minY
+
+      if (height > 0) {
+        let normalized = (targetY - minY) % (height * 2)
+        if (normalized < 0) normalized += height * 2
+        targetY = normalized <= height
+          ? minY + normalized
+          : maxY - (normalized - height)
+      }
+
+      // Add a controlled edge bias. Hitting away from the paddle centre
+      // creates a sharper return and is specifically how this game describes
+      // its intended strategy.
+      const direction = ((Math.floor((state.scoreMy + state.scoreCpu) * 1.7) % 2) === 0) ? -1 : 1
+      targetY += direction * state.paddleH * policy.edgeBias
+    }
+  }
+
+  const half = Math.max(8, state.paddleH / 2)
+  return Math.max(top + half, Math.min(bottom - half, targetY))
+}
+
+export function shouldPaddleMove(state, targetY, difficulty = 'medium') {
+  if (!state || state.finished || !Number.isFinite(targetY)) return { dir: null, reason: 'no-target' }
+  const policy = pongPolicy(difficulty)
+  const center = state.paddleY
+  const diff = targetY - center
+  if (Math.abs(diff) <= policy.deadband) return { dir: 'none', reason: 'aligned' }
+  return { dir: diff > 0 ? 'down' : 'up', reason: 'intercept' }
+}
+
+export async function paddleMouseMove(page, state, targetY = null) {
+  if (!state?.canvasRect) return false
+  const r = state.canvasRect
+  const y = Number.isFinite(targetY)
+    ? Math.max(r.top + 3, Math.min(r.top + r.height - 3, targetY))
+    : Math.max(r.top + 3, Math.min(r.top + r.height - 3, state.ballY))
+
+  try {
+    // vygam documents mouse movement/drag anywhere on the board as a control.
+    // Put the pointer well inside the game canvas, not over the page header.
+    await page.mouse.move(r.left + r.width * 0.50, y, { steps: 1 })
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function paddleKeyboardMove(page, direction) {
-  if (direction === 'none') return 'no-move'
+  if (!direction || direction === 'none') return false
   const key = direction === 'up' ? 'ArrowUp' : 'ArrowDown'
   try {
-    // A short hold is more reliable than a single keypress for games that
-    // move the paddle continuously while the arrow key is held.
-    const canvas = page.locator('canvas').filter({ has: undefined }).first()
-    await canvas.focus().catch(() => {})
     await page.keyboard.down(key)
-    await page.waitForTimeout(45)
+    await page.waitForTimeout(35)
     await page.keyboard.up(key)
-    return 'keypress'
+    return true
   } catch {
     try { await page.keyboard.up(key) } catch {}
-    return 'keypress-failed'
+    return false
   }
 }
 
 export async function restartPongGame(page) {
-  const selectors = [
-    'button:has-text("New Game")',
-    'button:has-text("Restart")',
-    'button:has-text("Play Again")',
+  for (const selector of [
     'button:has-text("New game")',
+    'button:has-text("New Game")',
+    'button:has-text("Play Again")',
+    'button:has-text("Restart")',
     'button.new-game',
     'button.restart',
-    'button.play-again',
-    '.new-game',
-    '.restart',
-    '.play-again',
-    'button[data-action="restart"]'
-  ]
-  for (const sel of selectors) {
+    'button.play-again'
+  ]) {
     try {
-      const btn = page.locator(sel).first()
-      if (await btn.isVisible({ timeout: 300 })) {
-        await btn.click({ timeout: 400 })
-        await page.waitForTimeout(200)
-        return 'restart-click'
+      const button = page.locator(selector).first()
+      if (await button.isVisible({ timeout: 400 })) {
+        await button.click({ timeout: 1000 })
+        await page.waitForTimeout(250)
+        return true
       }
     } catch {}
   }
-  // Never click a random page coordinate as a restart fallback. On vygam,
-  // the top-left area contains navigation and can leave /pong or open an external link.
-  return 'restart-failed'
+  return false
 }
 
-// AutoComplete Pong v1.1 — always opens the base Pong page and selects difficulty in-page.
 export function pongUrlForDifficulty() {
   return 'https://vygam.com/pong'
 }
 
 export async function selectPongDifficulty(page, difficulty = 'medium') {
   const label = difficulty.charAt(0).toUpperCase() + difficulty.slice(1).toLowerCase()
-  const selectors = [
+  for (const selector of [
     'button:has-text("' + label + '")',
     '[role="button"]:has-text("' + label + '")',
     'text=' + label
-  ]
-  for (const selector of selectors) {
+  ]) {
     try {
       const button = page.locator(selector).first()
       if (await button.isVisible({ timeout: 500 })) {
@@ -239,14 +234,11 @@ export async function selectPongDifficulty(page, difficulty = 'medium') {
 }
 
 export async function startPongGame(page) {
-  const selectors = [
+  for (const selector of [
     'button:has-text("Start game")',
     'button:has-text("Start Game")',
-    'button:has-text("Start")',
-    '[role="button"]:has-text("Start game")',
-    '[role="button"]:has-text("Start Game")'
-  ]
-  for (const selector of selectors) {
+    'button:has-text("Start")'
+  ]) {
     try {
       const button = page.locator(selector).first()
       if (await button.isVisible({ timeout: 500 })) {
@@ -256,16 +248,4 @@ export async function startPongGame(page) {
     } catch {}
   }
   return false
-}
-
-export async function paddleMouseMove(page, state) {
-  if (!state?.canvasRect || !Number.isFinite(state.ballY)) return false
-  const r = state.canvasRect
-  const y = Math.max(r.top + 4, Math.min(r.top + r.height - 4, state.ballY))
-  try {
-    // vygam supports mouse/drag control. Move over the player's side of the
-    // board so the game's pointer handler receives the paddle target directly.
-    await page.mouse.move(r.left + Math.max(8, r.width * 0.08), y, { steps: 2 })
-    return true
-  } catch { return false }
 }
