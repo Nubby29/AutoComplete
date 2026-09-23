@@ -1,8 +1,8 @@
-// AutoComplete Server v1.9 — Drive the vygam paddle with direct mouse targeting and keyboard fallback.
+// AutoComplete Server v2.0 — Instrument the real Pong canvas and drive predictive edge-hit play.
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
-import { readPongState, pongGoalMet, shouldPaddleMove, paddleKeyboardMove, paddleMouseMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
+import { readPongState, pongGoalMet, predictPongImpact, shouldPaddleMove, paddleKeyboardMove, paddleMouseMove, pongUrlForDifficulty, selectPongDifficulty, startPongGame, restartPongGame } from './pong.js'
 import { readSolitaireState, chooseSolitaireAction, solitaireCardLabel, dragTableauCard, dragWasteCard, dragFoundationCard, solitaireSignature, listSolitaireMoves } from './solitaire.js'
 
 const gameUrl = 'https://2048game.com/?ref=google-search-classic'
@@ -295,57 +295,77 @@ async function pongStep() {
   if (!session.running || !game.startsWith('pong')) return
   try {
     let state = await readPongState(page)
-    if (state.canvasDetected && state.ballX > 0 && state.ballY > 0 && state.paddleY > 0) pongLastGoodState = state
-    else if (pongLastGoodState) state = { ...pongLastGoodState, scoreMy: state.scoreMy, scoreCpu: state.scoreCpu, won: state.won, finished: state.finished }
-    if ((session.moves || 0) % 20 === 0) console.log(`[PONG] state score=${state.scoreMy}-${state.scoreCpu} ball=(${Math.round(state.ballX)},${Math.round(state.ballY)}) paddleY=${Math.round(state.paddleY)} canvas=${state.canvasDetected}`)
+
+    if (state.canvasDetected) pongLastGoodState = state
+    else if (pongLastGoodState) {
+      state = {
+        ...pongLastGoodState,
+        scoreMy: state.scoreMy,
+        scoreCpu: state.scoreCpu,
+        won: state.won,
+        finished: state.finished
+      }
+    }
+
     session.board = [state.scoreMy, state.scoreCpu]
     session.rows = 1
     session.columns = 2
     session.best = state.scoreMy
-    if (pongGoalMet(state, session.goal)) return stop(`Pong goal reached: ${state.scoreMy} points`)
+
+    if ((session.moves || 0) % 10 === 0) {
+      console.log(
+        `[PONG] score=${state.scoreMy}-${state.scoreCpu} ball=(${Math.round(state.ballX)},${Math.round(state.ballY)}) paddle=${Math.round(state.paddleY)} detected=${state.canvasDetected}`
+      )
+    }
+
+    if (pongGoalMet(state, session.goal)) {
+      return stop(`Pong won: ${state.scoreMy}-${state.scoreCpu}`, 'success')
+    }
+
     if (state.finished) {
-      if (state.won || state.scoreMy >= session.goal) return stop('Pong won: ' + state.scoreMy + '-' + state.scoreCpu, 'success')
       session.attempts = (session.attempts || 0) + 1
-      session.status = 'Pong lost ' + state.scoreMy + '-' + state.scoreCpu + ' · restarting attempt ' + session.attempts
-      await restartPongGame(page)
-      await page.waitForTimeout(350)
+      session.status = `Pong lost ${state.scoreMy}-${state.scoreCpu} · restarting attempt ${session.attempts}`
+      const restarted = await restartPongGame(page)
+      if (!restarted) {
+        return stop('Pong finished but the New Game control could not be found', 'stopped')
+      }
+      await page.waitForTimeout(300)
       pongLastY = null
       pongLastBall = null
-      loop = setTimeout(pongStep, 250)
+      pongLastGoodState = null
+      loop = setTimeout(pongStep, 150)
       return
     }
+
     const difficulty = game.split('-')[1] || 'medium'
 
-    // Predict where the ball will reach the left side instead of chasing
-    // its current position. This gives the paddle time to intercept fast shots.
-    let targetY = state.ballY
-    if (pongLastBall && state.ballX && state.ballY && pongLastBall.x !== state.ballX) {
-      const vx = state.ballX - pongLastBall.x
-      const vy = state.ballY - pongLastBall.y
-      if (vx < 0) {
-        const framesToLeft = Math.min(45, Math.max(1, state.ballX / Math.abs(vx)))
-        targetY = state.ballY + vy * framesToLeft
-        const top = state.paddleH / 2
-        const bottom = Math.max(top, 500 - state.paddleH / 2)
-        while (targetY < top || targetY > bottom) {
-          if (targetY < top) targetY = top + (top - targetY)
-          if (targetY > bottom) targetY = bottom - (targetY - bottom)
-        }
+    // The controller does not chase the ball. It predicts where the ball will
+    // cross the player's left paddle, reflects the trajectory at the walls,
+    // then biases the target toward the paddle edge for a sharper return.
+    const targetY = predictPongImpact(state, pongLastBall ? {
+      ballX: pongLastBall.x,
+      ballY: pongLastBall.y
+    } : null, difficulty)
+
+    if (Number.isFinite(targetY)) {
+      const action = shouldPaddleMove(state, targetY, difficulty)
+
+      if (action.dir && action.dir !== 'none') {
+        const mouseMoved = await paddleMouseMove(page, state, targetY)
+        if (!mouseMoved) await paddleKeyboardMove(page, action.dir)
+        session.moves += 1
+        session.status = `Pong ${difficulty}: ${action.dir} → target ${Math.round(targetY)} · score ${state.scoreMy}-${state.scoreCpu}`
+      } else {
+        session.status = `Pong ${difficulty}: aligned · score ${state.scoreMy}-${state.scoreCpu}`
       }
     }
-    pongLastBall = { x: state.ballX, y: state.ballY }
 
-    const action = shouldPaddleMove({ ...state, ballY: targetY }, pongLastY, difficulty)
-    if (action.dir && action.dir !== 'none') {
-      const mouseMoved = await paddleMouseMove(page, { ...state, ballY: targetY })
-      if (!mouseMoved) await paddleKeyboardMove(page, action.dir)
+    if (state.canvasDetected) {
+      pongLastBall = { x: state.ballX, y: state.ballY }
       pongLastY = state.paddleY
-      session.moves += 1
-      session.status = `Pong: moving ${action.dir} · score ${state.scoreMy}-${state.scoreCpu} · mouse=${mouseMoved}`
-    } else {
-      session.status = `Pong: tracking ball · score ${state.scoreMy}-${state.scoreCpu}`
     }
-    loop = setTimeout(pongStep, 25)
+
+    loop = setTimeout(pongStep, 16)
   } catch (error) {
     console.error('[PONG] Step error:', error)
     if (String(error).includes('closed')) return stop('Game tab closed', 'stopped')
@@ -748,6 +768,70 @@ async function start(goal, selectedGame = '2048') {
       console.log(`[PONG] Closed popup: ${popup.url()}`)
       await popup.close().catch(() => {})
     })
+    await page.addInitScript(() => {
+      const frames = []
+      const current = { canvas: null, rects: [], arcs: [], lastTime: 0 }
+      window.__pongTrace = { frames }
+
+      const commit = (ctx) => {
+        if (!ctx?.canvas || current.rects.length + current.arcs.length === 0) return
+        frames.push({
+          width: ctx.canvas.width,
+          height: ctx.canvas.height,
+          rects: current.rects.slice(),
+          arcs: current.arcs.slice()
+        })
+        while (frames.length > 8) frames.shift()
+        current.rects.length = 0
+        current.arcs.length = 0
+      }
+
+      const shouldTrace = (ctx) =>
+        ctx?.canvas && ctx.canvas.width > 200 && ctx.canvas.height > 100
+
+      const originalFillRect = CanvasRenderingContext2D.prototype.fillRect
+      CanvasRenderingContext2D.prototype.fillRect = function(x, y, w, h) {
+        if (shouldTrace(this)) {
+          const now = performance.now()
+          if (current.canvas && current.canvas !== this.canvas) {
+            current.rects.length = 0
+            current.arcs.length = 0
+          }
+          if (current.canvas === this.canvas && current.lastTime && now - current.lastTime > 8) {
+            commit(this)
+          }
+          current.canvas = this.canvas
+          current.lastTime = now
+          if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(w) && Number.isFinite(h)) {
+            current.rects.push({ x, y, w, h })
+          }
+        }
+        return originalFillRect.call(this, x, y, w, h)
+      }
+
+      const originalArc = CanvasRenderingContext2D.prototype.arc
+      CanvasRenderingContext2D.prototype.arc = function(x, y, radius, startAngle, endAngle, anticlockwise) {
+        if (shouldTrace(this)) {
+          const now = performance.now()
+          if (current.canvas === this.canvas && current.lastTime && now - current.lastTime > 8) {
+            commit(this)
+          }
+          current.canvas = this.canvas
+          current.lastTime = now
+          if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(radius)) {
+            current.arcs.push({ x, y, r: radius })
+          }
+        }
+        return originalArc.call(this, x, y, radius, startAngle, endAngle, anticlockwise)
+      }
+
+      const originalClearRect = CanvasRenderingContext2D.prototype.clearRect
+      CanvasRenderingContext2D.prototype.clearRect = function(x, y, w, h) {
+        if (shouldTrace(this)) commit(this)
+        return originalClearRect.call(this, x, y, w, h)
+      }
+    })
+
     await page.route('**/*', async (route) => {
       const request = route.request()
       const url = request.url()
