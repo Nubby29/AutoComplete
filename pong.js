@@ -31,7 +31,7 @@ function chooseCanvasShapes(trace, canvas) {
 export async function readPongState(page) {
   return page.evaluate(() => {
     const scoreFromText = (text, label) => {
-      const match = text.match(new RegExp(label + '\\\\s*\\\\n?\\\\s*(\\\\d+)', 'i'))
+      const match = text.match(new RegExp(label + '\\s*\\n?\\s*(\\d+)', 'i'))
       return match ? Number(match[1]) : 0
     }
     const chooseCanvasShapes = (trace, canvas) => {
@@ -63,7 +63,7 @@ export async function readPongState(page) {
       const r = canvas.getBoundingClientRect()
       canvasRect = { left: r.left, top: r.top, width: r.width, height: r.height }
 
-      const trace = window.__pongTrace?.last || null
+      const trace = [...(window.__pongTrace?.frames || [])].reverse().find(frame => frame.width === canvas.width && frame.height === canvas.height) || null
       const shapes = chooseCanvasShapes(trace, canvas)
 
       if (shapes.paddle && shapes.ball) {
