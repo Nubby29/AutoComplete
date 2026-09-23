@@ -19,6 +19,7 @@ let page
 let loop
 let game = '2048'
 let pongLastY = null
+let pongLastBall = null
 
 function sendJson(response, data) {
   response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
@@ -305,11 +306,32 @@ async function pongStep() {
       await restartPongGame(page)
       await page.waitForTimeout(350)
       pongLastY = null
+      pongLastBall = null
       loop = setTimeout(pongStep, 250)
       return
     }
     const difficulty = game.split('-')[1] || 'medium'
-    const action = shouldPaddleMove(state, pongLastY, difficulty)
+
+    // Predict where the ball will reach the left side instead of chasing
+    // its current position. This gives the paddle time to intercept fast shots.
+    let targetY = state.ballY
+    if (pongLastBall && state.ballX && state.ballY && pongLastBall.x !== state.ballX) {
+      const vx = state.ballX - pongLastBall.x
+      const vy = state.ballY - pongLastBall.y
+      if (vx < 0) {
+        const framesToLeft = Math.min(45, Math.max(1, state.ballX / Math.abs(vx)))
+        targetY = state.ballY + vy * framesToLeft
+        const top = state.paddleH / 2
+        const bottom = Math.max(top, 500 - state.paddleH / 2)
+        while (targetY < top || targetY > bottom) {
+          if (targetY < top) targetY = top + (top - targetY)
+          if (targetY > bottom) targetY = bottom - (targetY - bottom)
+        }
+      }
+    }
+    pongLastBall = { x: state.ballX, y: state.ballY }
+
+    const action = shouldPaddleMove({ ...state, ballY: targetY }, pongLastY, difficulty)
     if (action.dir && action.dir !== 'none') {
       await paddleKeyboardMove(page, action.dir)
       pongLastY = state.paddleY
@@ -318,7 +340,7 @@ async function pongStep() {
     } else {
       session.status = `Pong: tracking ball · score ${state.scoreMy}-${state.scoreCpu}`
     }
-    loop = setTimeout(pongStep, 40)
+    loop = setTimeout(pongStep, 25)
   } catch (error) {
     if (String(error).includes('closed')) return stop('Game tab closed', 'stopped')
     return stop('Pong automation stopped', 'stopped')
