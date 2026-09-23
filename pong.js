@@ -156,9 +156,14 @@ export async function paddleKeyboardMove(page, direction) {
   if (direction === 'none') return 'no-move'
   const key = direction === 'up' ? 'ArrowUp' : 'ArrowDown'
   try {
-    await page.keyboard.press(key)
+    // A short hold is more reliable than a single keypress for games that
+    // move the paddle continuously while the arrow key is held.
+    await page.keyboard.down(key)
+    await page.waitForTimeout(35)
+    await page.keyboard.up(key)
     return 'keypress'
   } catch {
+    try { await page.keyboard.up(key) } catch {}
     return 'keypress-failed'
   }
 }
