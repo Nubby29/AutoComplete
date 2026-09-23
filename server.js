@@ -1,4 +1,4 @@
-// AutoComplete Server v1.3 — Pong opens the base URL, selects the requested difficulty, and starts automatically.
+// AutoComplete Server v1.4 — Pong URL is verified after load and after each control interaction.
 import http from 'node:http'
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
@@ -729,14 +729,40 @@ async function start(goal, selectedGame = '2048') {
     await page.locator('.su-cell').first().waitFor({ state: 'attached', timeout: 10000 })
     await page.locator('button[aria-label="close"], .xwd__modal--close').first().click({ timeout: 1500 }).catch(() => {})
   } else if (game.startsWith('pong')) {
+    // v1.4: vygam/Pong must remain on /pong. Some navigation events can
+    // unexpectedly land on the site home page, so verify and recover before
+    // interacting with the game controls.
+    const pongUrl = 'https://vygam.com/pong'
     await page.waitForTimeout(800)
+    console.log(`[PONG] Requested URL: ${pongUrl}`)
+    console.log(`[PONG] Actual URL after load: ${page.url()}`)
+    if (!page.url().startsWith(pongUrl)) {
+      console.log('[PONG] Unexpected URL after load; returning to /pong')
+      await page.goto(pongUrl, { waitUntil: 'domcontentloaded' })
+      await page.waitForTimeout(800)
+    }
     const difficultySelected = await selectPongDifficulty(page, pongDifficulty)
     await page.waitForTimeout(250)
+    console.log(`[PONG] URL after difficulty selection: ${page.url()}`)
+    if (!page.url().startsWith(pongUrl)) {
+      console.log('[PONG] Difficulty click navigated away; restoring /pong')
+      await page.goto(pongUrl, { waitUntil: 'domcontentloaded' })
+      await page.waitForTimeout(800)
+      console.log('[PONG] Difficulty was not applied after navigation; continuing on /pong')
+    }
     const gameStarted = await startPongGame(page)
+    await page.waitForTimeout(250)
+    console.log(`[PONG] URL after Start: ${page.url()}`)
+    if (!page.url().startsWith(pongUrl)) {
+      console.log('[PONG] Start click navigated away; restoring /pong')
+      await page.goto(pongUrl, { waitUntil: 'domcontentloaded' })
+      await page.waitForTimeout(800)
+    }
     await page.locator('body').click({ position: { x: 20, y: 20 }, timeout: 1000 }).catch(() => {})
     pongLastY = null
     if (!difficultySelected) console.log(`Pong difficulty button not found: ${pongDifficulty}`)
     if (!gameStarted) console.log('Pong start button not found; continuing with live state detection')
+    console.log(`[PONG] Final URL: ${page.url()}`)
   } else if (game !== 'solitaire') {
     await page.getByText('New Game', { exact: true }).click().catch(() => {})
     await page.locator('.tile-container .tile').first().waitFor({ state: 'attached', timeout: 5000 })
